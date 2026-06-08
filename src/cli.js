@@ -158,7 +158,7 @@ export function normalizeRoutes(data, flags) {
       region: String(route.region || 'any').toUpperCase(),
       available: route.available !== false,
     };
-  }).filter((route) => Number.isFinite(route.price_per_hour));
+  }).filter((route) => Number.isFinite(route.price_per_hour) && route.price_per_hour > 0);
 
   if (flags.availableOnly) {
     routes.splice(0, routes.length, ...routes.filter((route) => route.available));

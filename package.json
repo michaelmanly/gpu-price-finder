@@ -1,6 +1,6 @@
 {
   "name": "gpu-price-finder",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Find cheap GPU routes. Run workloads with spend caps. Powered by AI Badgr.",
   "repository": {
     "type": "git",

@@ -177,6 +177,18 @@ describe('gpu-price-finder scenario: P2 — API returns 5xx error', () => {
 });
 
 describe('gpu-price-finder scenario: P3 — partial results or empty response', () => {
+  it('filters out zero-dollar routes from the API', () => {
+    const flags = resolveDetailedFlags(parseArgs(['--gpu', 'L40S']));
+    const routes = normalizeRoutes({
+      routes: [
+        { tier: 1, gpu: 'L40S', price_per_hour: 0, region: 'US', available: true },
+        { tier: 1, gpu: 'L40S', price_per_hour: 0.89, region: 'US', available: true },
+      ],
+    }, flags);
+    expect(routes).toHaveLength(1);
+    expect(routes[0].price_per_hour).toBe(0.89);
+  });
+
   it('returns empty array when API responds with empty routes list', async () => {
     const { fetchRoutes } = await import('../src/cli.js');
     const emptyFetch = () =>
