@@ -1,6 +1,6 @@
 {
   "name": "gpu-price-finder",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Find cheap GPU routes. Run workloads with spend caps. Powered by AI Badgr.",
   "repository": {
     "type": "git",
@@ -21,8 +21,8 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "node --check src/cli.js",
-    "build": "node --check src/cli.js"
+    "typecheck": "node --check src/cli.js && node --check src/analytics.js",
+    "build": "node --check src/cli.js && node --check src/analytics.js"
   },
   "engines": {
     "node": ">=18.0.0"

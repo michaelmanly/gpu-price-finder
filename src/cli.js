@@ -2,6 +2,7 @@
 
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createAnalytics, searchContext } from './analytics.js';
 
 const DEFAULT_BASE_URL = 'https://aibadgr.com/v1';
 const GITHUB_URL = 'https://github.com/michaelmanly/gpu-price-finder';
@@ -464,11 +465,18 @@ export function helpText() {
 
 export async function main(argv = process.argv.slice(2), options = {}) {
   const write = options.write || ((text) => console.log(text));
+  const analytics = options.analytics ?? createAnalytics();
   const flags = parseArgs(argv);
+  const mode = isOverviewMode(flags) ? 'overview' : 'detailed';
+
   if (flags.help) {
+    analytics.track('help_viewed');
+    await analytics.flush();
     write(helpText());
     return;
   }
+
+  analytics.track('cli_invoked', { mode, ...searchContext(flags) });
 
   const showLoading = !flags.json && !flags.full;
   const stopLoading = showLoading ? startLoadingPhases(options.writeLoading) : () => {};
@@ -477,32 +485,60 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     if (isOverviewMode(flags)) {
       const overview = await fetchOverview(flags, options.fetchImpl);
       stopLoading();
+      const routeCount = overview.reduce((total, entry) => total + entry.routes.length, 0);
+      analytics.track(routeCount > 0 ? 'overview_completed' : 'search_no_results', {
+        mode,
+        gpu_count: overview.length,
+        route_count: routeCount,
+        ...searchContext(flags),
+      });
       if (flags.json || flags.full) {
         write(JSON.stringify(overview, null, 2));
+        await analytics.flush();
         return;
       }
       write(formatOverviewOutput(overview));
+      await analytics.flush();
       return;
     }
 
     const detailed = resolveDetailedFlags(flags);
     const result = await fetchSearch(detailed, options.fetchImpl);
     stopLoading();
+    analytics.track(result.routes.length > 0 ? 'search_completed' : 'search_no_results', {
+      mode,
+      route_count: result.routes.length,
+      alternative_count: result.alternatives.length,
+      cheapest_price: result.routes[0]?.price_per_hour,
+      cheapest_tier: result.routes[0]?.tier,
+      ...searchContext(flags),
+    });
     if (flags.full) {
       write(JSON.stringify(result, null, 2));
+      await analytics.flush();
       return;
     }
     if (flags.json) {
       write(JSON.stringify(result.routes, null, 2));
+      await analytics.flush();
       return;
     }
     write(formatTextOutput(result.routes, detailed, result.alternatives));
+    await analytics.flush();
   } catch (error) {
     stopLoading();
     if (isTimeoutError(error) && !flags.json && !flags.full) {
+      analytics.track('search_timeout', { mode, ...searchContext(flags) });
+      await analytics.flush();
       write(formatTimeoutFallback(flags));
       return;
     }
+    analytics.track('search_error', {
+      mode,
+      error_type: error?.name || 'Error',
+      ...searchContext(flags),
+    });
+    await analytics.flush();
     throw error;
   }
 }
@@ -518,12 +554,23 @@ export function isCliEntry() {
 }
 
 if (isCliEntry()) {
-  main().catch((error) => {
+  main().catch(async (error) => {
+    const flags = parseArgs(process.argv.slice(2));
+    const mode = flags.gpu ? 'detailed' : 'overview';
+    const analytics = createAnalytics();
     if (isTimeoutError(error)) {
-      console.log(formatTimeoutFallback(parseArgs(process.argv.slice(2))));
+      analytics.track('search_timeout', { mode, ...searchContext(flags) });
+      await analytics.flush();
+      console.log(formatTimeoutFallback(flags));
       process.exit(0);
       return;
     }
+    analytics.track('search_error', {
+      mode,
+      error_type: error?.name || 'Error',
+      ...searchContext(flags),
+    });
+    await analytics.flush();
     console.error(error.message);
     process.exit(1);
   });
