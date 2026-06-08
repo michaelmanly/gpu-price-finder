@@ -1,7 +1,15 @@
 {
   "name": "gpu-price-finder",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Find cheap GPU routes. Run workloads with spend caps. Powered by AI Badgr.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelmanly/gpu-price-finder.git"
+  },
+  "homepage": "https://github.com/michaelmanly/gpu-price-finder",
+  "bugs": {
+    "url": "https://github.com/michaelmanly/gpu-price-finder/issues"
+  },
   "type": "module",
   "bin": {
     "gpu-price-finder": "src/cli.js"

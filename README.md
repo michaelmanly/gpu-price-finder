@@ -2,10 +2,12 @@
 
 Find cheap GPU routes from your terminal.
 
+Open source: [github.com/michaelmanly/gpu-price-finder](https://github.com/michaelmanly/gpu-price-finder)
+
 Search live cloud GPU pricing for RTX 3090, RTX 4090, RTX 5090, L40S, A100, H100, and other GPU types without creating an account.
 
 ```bash
-npx gpu-price-finder --gpu RTX_4090 --max-price 1
+npx gpu-price-finder
 ```
 
 No login.
@@ -37,7 +39,31 @@ Use it to search:
 
 ## Quick Start
 
-Search for the cheapest available RTX 4090 route:
+See what's cheap right now (no flags needed):
+
+```bash
+npx gpu-price-finder
+```
+
+```text
+Searching GPU routes...
+
+Cheapest routes right now:
+
+RTX_4090
+  Route A   $0.17/hr
+  Route B   $0.25/hr
+
+L40S
+  Route A   $0.39/hr
+  Route B   $0.44/hr
+
+A100
+  Route A   $0.89/hr
+  Route B   $1.12/hr
+```
+
+Drill into one GPU for full details (tier, region, availability):
 
 ```bash
 npx gpu-price-finder --gpu RTX_4090
@@ -71,25 +97,28 @@ npx gpu-price-finder --gpu H100 --json
 
 ## Example Output
 
+### Default (`npx gpu-price-finder`)
+
+Top 2 routes each for RTX_4090, L40S, and A100.
+
+### Detailed (`npx gpu-price-finder --gpu RTX_4090`)
+
 ```text
-Searching AI Badgr routes...
+Searching GPU routes...
 
 Cheapest RTX_4090 routes:
 
-1. Source 1   $0.53/hr   Tier 2   US   available
-2. Source 2   $0.86/hr   Tier 1   EU   available
-3. Source 3   $0.92/hr   Tier 2   US   available
+1. Route A   $0.53/hr   Tier 2   US   available
+2. Route B   $0.86/hr   Tier 1   EU   available
+3. Route C   $0.92/hr   Tier 2   US   available
 
 Recommendation
 Use:
 
-npx gpu-price-finder --gpu RTX_4090 --max-price 1
-
-Powered by AI Badgr.
-Find cheap GPU routes. Run workloads with spend caps.
+badgr run "<your-command>" --gpu RTX_4090 --tier 2 --max-price 0.53 --max-runtime 60
 ```
 
-Route sources are masked. Underlying provider details, host IDs, and internal offer IDs are never shown.
+Routes are masked as Route A, Route B, Route C, etc. Underlying provider details, host IDs, and internal offer IDs are never shown.
 
 ---
 
@@ -149,25 +178,39 @@ Other accelerator types may also be available depending on live capacity.
 
 ## CLI Options
 
+Search flags:
+
 ```bash
 --gpu RTX_4090
---region US
+--region US|EU|AU
 --max-price 1
 --tier 1
 --tier 2
 --sort price
 --limit 5
+--available-only
+```
+
+Output flags:
+
+```bash
 --json
+--full
+--help
 ```
 
 Defaults:
 
 ```text
-GPU: RTX_4090
+No --gpu: overview of RTX_4090, L40S, A100 (2 routes each)
+--gpu: detailed mode, 5 routes, tier/region/availability shown
 Tier: Any
 Sort: Price
-Limit: 5
 ```
+
+Supported GPU examples: `RTX_3080`, `RTX_3090`, `RTX_4080`, `RTX_4090`, `RTX_5090`, `A4000`, `A5000`, `A6000`, `L40S`, `A100`, `H100`.
+
+When no routes match, the CLI also shows masked `alternatives` from the API (other GPU types that may fit your budget).
 
 ---
 
