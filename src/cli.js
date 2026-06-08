@@ -13,6 +13,8 @@ const SUPPORTED_GPUS = [
 export const OVERVIEW_GPUS = ['RTX_4090', 'L40S', 'A100'];
 export const OVERVIEW_ROUTES_PER_GPU = 2;
 export const DETAILED_DEFAULT_LIMIT = 5;
+const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_RETRIES = 2;
 const LEGACY_BASE_URLS = new Set([
   'https://api.aibadgr.com/v1',
   'https://api.aibadgr.com',
@@ -174,6 +176,44 @@ export function normalizeRoutes(data, flags) {
   }));
 }
 
+function isRetryableFetchError(error) {
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return true;
+  const message = String(error?.message || error || '');
+  return /timeout|aborted|ECONNRESET|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(message);
+}
+
+async function fetchJson(url, fetchImpl = globalThis.fetch) {
+  let lastError;
+  for (let attempt = 0; attempt <= REQUEST_RETRIES; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      if (!response.ok) {
+        const message = data?.message || data?.detail || response.statusText || 'capacity search failed';
+        throw new Error(`AI Badgr route search failed (HTTP ${response.status}): ${message}`);
+      }
+      return data || {};
+    } catch (error) {
+      lastError = error;
+      if (attempt < REQUEST_RETRIES && isRetryableFetchError(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
 export function normalizeAlternatives(data) {
   const rawAlternatives = Array.isArray(data) ? [] : (data.alternatives || []);
   return rawAlternatives.map((alt) => ({
@@ -192,22 +232,7 @@ export async function fetchSearch(flags, fetchImpl = globalThis.fetch) {
     throw new Error('fetchSearch requires --gpu');
   }
   const url = buildSearchUrl(flags);
-  const response = await fetchImpl(url, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(15_000),
-  });
-  const text = await response.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  if (!response.ok) {
-    const message = data?.message || data?.detail || response.statusText || 'capacity search failed';
-    throw new Error(`AI Badgr route search failed (HTTP ${response.status}): ${message}`);
-  }
-  const payload = data || {};
+  const payload = await fetchJson(url, fetchImpl);
   return {
     routes: normalizeRoutes(payload, flags),
     alternatives: normalizeAlternatives(payload),
@@ -285,7 +310,7 @@ export function formatOverviewOutput(overview) {
   overview.forEach(({ gpu, routes }) => {
     lines.push(gpu);
     routes.forEach((route) => {
-      lines.push(`  ${route.source}   ${formatPrice(route.price_per_hour)}`);
+      lines.push(`  ${route.source}   ${formatPrice(route.price_per_hour)}   Tier ${route.tier}`);
     });
     lines.push('');
   });
@@ -358,7 +383,7 @@ export function helpText() {
     '  npx gpu-price-finder --gpu RTX_4090 [flags]',
     '',
     'Default (no --gpu):',
-    `  Shows top ${OVERVIEW_ROUTES_PER_GPU} routes each for ${OVERVIEW_GPUS.join(', ')}`,
+    `  Shows top ${OVERVIEW_ROUTES_PER_GPU} routes each for ${OVERVIEW_GPUS.join(', ')} with tier and price`,
     '',
     'Detailed (--gpu):',
     `  Shows top ${DETAILED_DEFAULT_LIMIT} routes for one GPU with tier, region, and availability`,

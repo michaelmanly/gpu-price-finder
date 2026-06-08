@@ -87,22 +87,22 @@ describe('gpu-price-finder CLI', () => {
       {
         gpu: 'RTX_4090',
         routes: [
-          { source: 'Route A', price_per_hour: 0.17 },
-          { source: 'Route B', price_per_hour: 0.25 },
+          { source: 'Route A', price_per_hour: 0.17, tier: 2 },
+          { source: 'Route B', price_per_hour: 0.25, tier: 2 },
         ],
       },
       {
         gpu: 'L40S',
         routes: [
-          { source: 'Route A', price_per_hour: 0.39 },
-          { source: 'Route B', price_per_hour: 0.44 },
+          { source: 'Route A', price_per_hour: 0.39, tier: 1 },
+          { source: 'Route B', price_per_hour: 0.44, tier: 1 },
         ],
       },
       {
         gpu: 'A100',
         routes: [
-          { source: 'Route A', price_per_hour: 0.89 },
-          { source: 'Route B', price_per_hour: 1.12 },
+          { source: 'Route A', price_per_hour: 0.89, tier: 1 },
+          { source: 'Route B', price_per_hour: 1.12, tier: 1 },
         ],
       },
     ]);
@@ -110,13 +110,14 @@ describe('gpu-price-finder CLI', () => {
     expect(output).toContain('Searching GPU routes...');
     expect(output).toContain('Cheapest routes right now:');
     expect(output).toContain('RTX_4090');
-    expect(output).toContain('  Route A   $0.17/hr');
-    expect(output).toContain('  Route B   $0.25/hr');
+    expect(output).toContain('  Route A   $0.17/hr   Tier 2');
+    expect(output).toContain('  Route B   $0.25/hr   Tier 2');
     expect(output).toContain('L40S');
     expect(output).toContain('A100');
     expect(output).toContain('Drill down:');
     expect(output).toContain('npx gpu-price-finder --gpu RTX_4090');
-    expect(output).not.toContain('Tier');
+    expect(output).toContain('Tier 1');
+    expect(output).toContain('Tier 2');
   });
 
   it('prints detailed output with tier, region, and availability', () => {
@@ -287,5 +288,28 @@ describe('gpu-price-finder scenario: e2e — full fetch + format pipeline', () =
     expect(JSON.stringify(routes)).not.toContain('internal-offer');
     expect(JSON.stringify(routes)).not.toContain('secret');
     expect(JSON.stringify(routes)).not.toContain('sensitive');
+  });
+
+  it('retries transient fetch failures before giving up', async () => {
+    const { fetchRoutes } = await import('../src/cli.js');
+    let attempts = 0;
+    const flakyFetch = () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return Promise.reject(new Error('The operation was aborted due to timeout'));
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          routes: [{ tier: 2, gpu: 'RTX_4090', price_per_hour: 0.42, region: 'US', available: true }],
+        }),
+      });
+    };
+
+    const routes = await fetchRoutes(parseArgs(['--gpu', 'RTX_4090']), flakyFetch);
+    expect(attempts).toBe(2);
+    expect(routes).toHaveLength(1);
+    expect(routes[0].price_per_hour).toBe(0.42);
   });
 });
