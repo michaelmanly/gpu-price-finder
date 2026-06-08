@@ -285,5 +285,7 @@ describe('gpu-price-finder scenario: e2e — full fetch + format pipeline', () =
     expect(text).toContain('Route A');
     expect(text).toContain('$0.53/hr');
     expect(JSON.stringify(routes)).not.toContain('internal-offer');
+    expect(JSON.stringify(routes)).not.toContain('secret');
+    expect(JSON.stringify(routes)).not.toContain('sensitive');
   });
 });
