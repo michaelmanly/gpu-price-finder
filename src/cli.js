@@ -13,6 +13,13 @@ const SUPPORTED_GPUS = [
 export const OVERVIEW_GPUS = ['RTX_4090', 'L40S', 'A100'];
 export const OVERVIEW_ROUTES_PER_GPU = 2;
 export const DETAILED_DEFAULT_LIMIT = 5;
+export const LOADING_PHASES = [
+  'Checking managed routes...',
+  'Checking partner routes...',
+  'Checking regional availability...',
+  'Ranking cheapest options...',
+];
+export const LOADING_PHASE_INTERVAL_MS = 1500;
 const REQUEST_TIMEOUT_MS = 30_000;
 const REQUEST_RETRIES = 2;
 const LEGACY_BASE_URLS = new Set([
@@ -176,10 +183,58 @@ export function normalizeRoutes(data, flags) {
   }));
 }
 
-function isRetryableFetchError(error) {
+export function isTimeoutError(error) {
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return true;
+  return /timeout|aborted|timed out/i.test(String(error?.message || error || ''));
+}
+
+function isRetryableFetchError(error) {
+  if (isTimeoutError(error)) return true;
   const message = String(error?.message || error || '');
-  return /timeout|aborted|ECONNRESET|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(message);
+  return /ECONNRESET|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(message);
+}
+
+export function startLoadingPhases(writeLine = (line) => process.stderr.write(`${line}\n`)) {
+  let phase = 0;
+  writeLine(LOADING_PHASES[0]);
+  const timer = setInterval(() => {
+    phase += 1;
+    if (phase < LOADING_PHASES.length) {
+      writeLine(LOADING_PHASES[phase]);
+    } else {
+      clearInterval(timer);
+    }
+  }, LOADING_PHASE_INTERVAL_MS);
+  return () => clearInterval(timer);
+}
+
+export function formatTimeoutFallback(flags) {
+  const gpu = flags.gpu || 'RTX_4090';
+  return [
+    'Search timed out. Try:',
+    `npx gpu-price-finder --gpu ${gpu}`,
+    '',
+  ].join('\n');
+}
+
+export function formatOnboardingBlock(gpu, route) {
+  const price = Number(route.price_per_hour).toFixed(2);
+  return [
+    `Run on the cheapest ${gpu} route:`,
+    '',
+    'npm install -g badgr-cli',
+    'badgr login',
+    `badgr run "<your-command>" --gpu ${gpu} --tier ${route.tier} --max-price ${price} --max-runtime 60`,
+    '',
+  ].join('\n');
+}
+
+export function pickOnboardingRoute(overview) {
+  const preferred = overview.find((entry) => entry.gpu === 'RTX_4090' && entry.routes.length > 0);
+  if (preferred) return { gpu: preferred.gpu, route: preferred.routes[0] };
+  const fallback = overview.find((entry) => entry.routes.length > 0);
+  if (fallback) return { gpu: fallback.gpu, route: fallback.routes[0] };
+  return null;
 }
 
 async function fetchJson(url, fetchImpl = globalThis.fetch) {
@@ -286,8 +341,6 @@ function formatAlternativeLines(alternatives, limit = 5) {
 
 export function formatOverviewOutput(overview) {
   const lines = [
-    'Searching GPU routes...',
-    '',
     'Cheapest routes right now:',
     '',
   ];
@@ -314,6 +367,11 @@ export function formatOverviewOutput(overview) {
     });
     lines.push('');
   });
+
+  const onboarding = pickOnboardingRoute(overview);
+  if (onboarding) {
+    lines.push(formatOnboardingBlock(onboarding.gpu, onboarding.route));
+  }
 
   lines.push(
     'Drill down:',
@@ -348,8 +406,6 @@ export function formatTextOutput(routes, flags, alternatives = []) {
   }
 
   const lines = [
-    'Searching GPU routes...',
-    '',
     `Cheapest ${gpu} routes:`,
     '',
   ];
@@ -358,14 +414,8 @@ export function formatTextOutput(routes, flags, alternatives = []) {
     lines.push(`${index + 1}. ${route.source}   ${formatPrice(route.price_per_hour)}   Tier ${route.tier}   ${route.region}   ${status}`);
   });
 
-  const best = routes[0];
+  lines.push('', formatOnboardingBlock(gpu, routes[0]));
   lines.push(
-    '',
-    'Recommendation',
-    'Use:',
-    '',
-    `badgr run "<your-command>" --gpu ${best.gpu} --tier ${best.tier} --max-price ${best.price_per_hour.toFixed(2)} --max-runtime 60`,
-    '',
     'Powered by AI Badgr.',
     'Find cheap GPU routes. Run workloads with spend caps.',
     '',
@@ -412,34 +462,49 @@ export function helpText() {
   ].join('\n');
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), options = {}) {
+  const write = options.write || ((text) => console.log(text));
   const flags = parseArgs(argv);
   if (flags.help) {
-    console.log(helpText());
+    write(helpText());
     return;
   }
 
-  if (isOverviewMode(flags)) {
-    const overview = await fetchOverview(flags);
-    if (flags.json || flags.full) {
-      console.log(JSON.stringify(overview, null, 2));
+  const showLoading = !flags.json && !flags.full;
+  const stopLoading = showLoading ? startLoadingPhases(options.writeLoading) : () => {};
+
+  try {
+    if (isOverviewMode(flags)) {
+      const overview = await fetchOverview(flags, options.fetchImpl);
+      stopLoading();
+      if (flags.json || flags.full) {
+        write(JSON.stringify(overview, null, 2));
+        return;
+      }
+      write(formatOverviewOutput(overview));
       return;
     }
-    console.log(formatOverviewOutput(overview));
-    return;
-  }
 
-  const detailed = resolveDetailedFlags(flags);
-  const result = await fetchSearch(detailed);
-  if (flags.full) {
-    console.log(JSON.stringify(result, null, 2));
-    return;
+    const detailed = resolveDetailedFlags(flags);
+    const result = await fetchSearch(detailed, options.fetchImpl);
+    stopLoading();
+    if (flags.full) {
+      write(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (flags.json) {
+      write(JSON.stringify(result.routes, null, 2));
+      return;
+    }
+    write(formatTextOutput(result.routes, detailed, result.alternatives));
+  } catch (error) {
+    stopLoading();
+    if (isTimeoutError(error) && !flags.json && !flags.full) {
+      write(formatTimeoutFallback(flags));
+      return;
+    }
+    throw error;
   }
-  if (flags.json) {
-    console.log(JSON.stringify(result.routes, null, 2));
-    return;
-  }
-  console.log(formatTextOutput(result.routes, detailed, result.alternatives));
 }
 
 export function isCliEntry() {
@@ -454,6 +519,11 @@ export function isCliEntry() {
 
 if (isCliEntry()) {
   main().catch((error) => {
+    if (isTimeoutError(error)) {
+      console.log(formatTimeoutFallback(parseArgs(process.argv.slice(2))));
+      process.exit(0);
+      return;
+    }
     console.error(error.message);
     process.exit(1);
   });

@@ -5,10 +5,16 @@ import {
   buildSearchUrl,
   DETAILED_DEFAULT_LIMIT,
   fetchOverview,
+  formatOnboardingBlock,
   formatOverviewOutput,
   formatTextOutput,
+  formatTimeoutFallback,
   isCliEntry,
   isOverviewMode,
+  isTimeoutError,
+  LOADING_PHASES,
+  LOADING_PHASE_INTERVAL_MS,
+  main,
   normalizeAlternatives,
   normalizeBaseUrl,
   normalizeRoutes,
@@ -17,6 +23,7 @@ import {
   parseArgs,
   resolveDetailedFlags,
   routeLabel,
+  startLoadingPhases,
 } from '../src/cli.js';
 
 describe('gpu-price-finder CLI', () => {
@@ -107,13 +114,16 @@ describe('gpu-price-finder CLI', () => {
       },
     ]);
 
-    expect(output).toContain('Searching GPU routes...');
     expect(output).toContain('Cheapest routes right now:');
     expect(output).toContain('RTX_4090');
     expect(output).toContain('  Route A   $0.17/hr   Tier 2');
     expect(output).toContain('  Route B   $0.25/hr   Tier 2');
     expect(output).toContain('L40S');
     expect(output).toContain('A100');
+    expect(output).toContain('Run on the cheapest RTX_4090 route:');
+    expect(output).toContain('npm install -g badgr-cli');
+    expect(output).toContain('badgr login');
+    expect(output).toContain('badgr run "<your-command>" --gpu RTX_4090 --tier 2 --max-price 0.17 --max-runtime 60');
     expect(output).toContain('Drill down:');
     expect(output).toContain('npx gpu-price-finder --gpu RTX_4090');
     expect(output).toContain('Tier 1');
@@ -124,12 +134,57 @@ describe('gpu-price-finder CLI', () => {
     const output = formatTextOutput([
       { source: 'Route A', tier: 2, gpu: 'RTX_4090', price_per_hour: 0.42, region: 'US', available: true },
     ], parseArgs(['--gpu', 'RTX_4090']));
-    expect(output).toContain('Searching GPU routes...');
     expect(output).toContain('Cheapest RTX_4090 routes:');
     expect(output).toContain('1. Route A   $0.42/hr   Tier 2   US   available');
-    expect(output).toContain('Recommendation');
-    expect(output).toContain('badgr run');
-    expect(output).not.toContain('badgr login');
+    expect(output).toContain('Run on the cheapest RTX_4090 route:');
+    expect(output).toContain('npm install -g badgr-cli');
+    expect(output).toContain('badgr login');
+    expect(output).toContain('badgr run "<your-command>" --gpu RTX_4090 --tier 2 --max-price 0.42 --max-runtime 60');
+  });
+
+  it('formats timeout fallback instead of aborting', () => {
+    expect(formatTimeoutFallback(parseArgs([]))).toContain('Search timed out. Try:');
+    expect(formatTimeoutFallback(parseArgs([]))).toContain('npx gpu-price-finder --gpu RTX_4090');
+    expect(formatTimeoutFallback(parseArgs(['--gpu', 'L40S']))).toContain('npx gpu-price-finder --gpu L40S');
+    expect(isTimeoutError(new Error('The operation was aborted due to timeout'))).toBe(true);
+  });
+
+  it('main prints timeout fallback on search timeout', async () => {
+    const lines = [];
+    const timeoutFetch = () => Promise.reject(new Error('The operation was aborted due to timeout'));
+    await main(['--gpu', 'RTX_4090'], {
+      write: (text) => lines.push(text),
+      writeLoading: () => {},
+      fetchImpl: timeoutFetch,
+    });
+    expect(lines.join('\n')).toContain('Search timed out. Try:');
+    expect(lines.join('\n')).toContain('npx gpu-price-finder --gpu RTX_4090');
+  });
+
+  it('main prints timeout fallback for overview mode', async () => {
+    const lines = [];
+    const timeoutFetch = () => Promise.reject(new Error('The operation timed out'));
+    await main([], {
+      write: (text) => lines.push(text),
+      writeLoading: () => {},
+      fetchImpl: timeoutFetch,
+    });
+    expect(lines.join('\n')).toContain('Search timed out. Try:');
+    expect(lines.join('\n')).toContain('npx gpu-price-finder --gpu RTX_4090');
+  });
+
+  it('startLoadingPhases emits all loading lines', async () => {
+    const lines = [];
+    const stop = startLoadingPhases((line) => lines.push(line));
+    await new Promise((resolve) => setTimeout(resolve, LOADING_PHASE_INTERVAL_MS * 3 + 50));
+    stop();
+    expect(lines).toEqual(LOADING_PHASES);
+  }, 10_000);
+
+  it('formatOnboardingBlock uses route tier and price', () => {
+    const block = formatOnboardingBlock('RTX_4090', { tier: 2, price_per_hour: 0.23 });
+    expect(block).toContain('Run on the cheapest RTX_4090 route:');
+    expect(block).toContain('--tier 2 --max-price 0.23 --max-runtime 60');
   });
 
   it('no-results detailed output includes alternatives and retry hints', () => {
