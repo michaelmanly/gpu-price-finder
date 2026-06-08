@@ -212,6 +212,7 @@ describe('gpu-price-finder scenario: P3 — partial results or empty response', 
       const gpu = new URL(url).searchParams.get('gpu');
       const limit = Number(new URL(url).searchParams.get('limit'));
       expect(limit).toBe(OVERVIEW_ROUTES_PER_GPU);
+      expect(new URL(url).searchParams.get('tier')).toBeNull();
       return Promise.resolve({
         ok: true,
         status: 200,
